@@ -8,3 +8,5 @@
 ## Acknowledgments
 
 This package builds upon earlier work by Luigi Pertoldi from [dk0gen.jl](https://github.com/gipert/dk0gen.jl).
+
+Default data files are sourced from J. Kotila and F. Iachello, Physical Review C **85,** 034316 (2012) and nucleartheory.yale.edu.
