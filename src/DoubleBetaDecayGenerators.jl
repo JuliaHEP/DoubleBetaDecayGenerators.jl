@@ -14,11 +14,11 @@ using Artifacts
     acute_inv_cdf(x, q)
 
 The inverse of the cumulative of the "acute" probability distribution, where q
-is the linear angular coefficient.
+is the linear angular coefficient. For `q = 0` the distribution is uniform.
 
 [1] https://stats.stackexchange.com/questions/171592/generate-random-numbers-with-linear-distribution
 """
-acute_inv_cdf(x::Real, q::Real) = (√(q^2 - 2q + 4q*x+1) - 1)/q
+acute_inv_cdf(x::Real, q::Real) = iszero(q) ? 2x - 1 : (√(q^2 - 2q + 4q*x+1) - 1)/q
 
 const DBD_ISOTOPES::NTuple{19,Symbol} = (
     :Ca48, :Cd116, :Gd160, :Ge76, :Mo100, :Nd148, :Nd150, :Pd110, :Pt198,
@@ -42,8 +42,8 @@ struct ZeroNuDBDData <: DBDData
     Q_value_keV::Real
     function ZeroNuDBDData(isotope::Symbol, datasource::Type{<:DBDDataSource} = KotilaIachello2012)
         @assert isotope in DBD_ISOTOPES "$isotope does not undergo double-beta decay.\nAvailable isotopes are $DBD_ISOTOPES."
-        @debug "Reading raw data from '$path'"
         path = @artifact_str("$(nameof(datasource))/$isotope")
+        @debug "Reading raw data from '$path'"
 
         _cor_data = readdlm("$path/cor_0v.txt", Float64)[:, 3]
         _ses_data = readdlm("$path/ses_0v.txt", Float64)[:, 3]
@@ -88,8 +88,8 @@ struct TwoNuDBDData <: DBDData
 
     function TwoNuDBDData(isotope::Symbol, datasource::Type{<:DBDDataSource} = KotilaIachello2012)
         @assert isotope in DBD_ISOTOPES "$isotope does not undergo double-beta decay.\nAvailable isotopes are $DBD_ISOTOPES."
-        @debug "Reading raw data from '$path'"
         path = @artifact_str("$(nameof(datasource))/$isotope")
+        @debug "Reading raw data from '$path'"
 
         _ses_data = readdlm("$path/ses.txt", Float64)[:, 3]
         e_max_keV = length(_ses_data)
@@ -132,7 +132,8 @@ Legacy code for generating events in the DECAY0 format.
 """
 module Legacy
 
-using ..DoubleBetaDecayGenerators: TwoNuDBDData, rand, acute_inv_cdf
+using ..DoubleBetaDecayGenerators: TwoNuDBDData
+using Random: AbstractRNG, default_rng
 using Rotations
 using ProgressMeter
 using Printf
@@ -143,32 +144,23 @@ Convert energy to momentum (relativistic)
 momentum(E) = √((E + 511)^2 - 511^2)
 
 """
-    rand_2nbb(data::TwoNuDBDData)
+    rand_2nbb([rng,] data::TwoNuDBDData)
 
 Generate the momenta of the two electrons emitted in two-neutrino double-beta
 decay, according to numerical calculations wrapped by 'data'. Units of keV.
 """
-function rand_2nbb(data::TwoNuDBDData)
-
-    # sample electron energies
-    E1, E2 = rand(data.tds_dist)
-    @debug "Electron energies" E1, E2
-
-    # sample the angle between the two electrons
-    # select angular coefficient
-    idx = Int(trunc(E1)) # the energy in keV can be used as index
-    α = data._cor_data[idx > 0 ? idx : 1]
-    # sample cosine of the angle from a linear pdf
-    cosθ12 = acute_inv_cdf(rand(), α)
-    ϕ = 2π * rand()
+function rand_2nbb(rng::AbstractRNG, data::TwoNuDBDData)
+    E1, E2, cosθ12 = rand(rng, data)
+    ϕ = 2π * rand(rng)
     @debug "Direction of second electron, when the first is along z" cosθ12, ϕ
 
+    sinθ12 = √(1 - cosθ12^2)
     p1 = [0, 0, 1]
-    p2 = [cos(ϕ), sin(ϕ), cosθ12] ./ √(1 + cosθ12^2)
+    p2 = [sinθ12 * cos(ϕ), sinθ12 * sin(ϕ), cosθ12]
 
     # rotate randomly the two vectors with the same transformation,
     # to preserve the angle between them
-    R = rand(RotMatrix{3})
+    R = rand(rng, RotMatrix{3})
     p1 = R * p1
     p2 = R * p2
 
@@ -179,14 +171,16 @@ function rand_2nbb(data::TwoNuDBDData)
     return p1, p2
 end
 
+rand_2nbb(data::TwoNuDBDData) = rand_2nbb(default_rng(), data)
+
 """
-    dk0gen(N; options)
+    dk0gen(N; output, isotope, rng)
 
 Generate N events and dump them on file in the DECAY0 format.
 """
-function dk0gen(n::Int64; output="ge76-ssd.dk0", input="76Ge_ssd")
+function dk0gen(n::Int64; output="ge76-2nbb.dk0", isotope::Symbol=:Ge76, rng::AbstractRNG=default_rng())
 
-    data = TwoNuDBDData(input)
+    data = TwoNuDBDData(isotope)
 
     @info "Generating and writing events to file '$output'"
     fout = open(output, "w")
@@ -197,7 +191,7 @@ function dk0gen(n::Int64; output="ge76-ssd.dk0", input="76Ge_ssd")
   date and time :   12. 9.2020    17:50:37
   initial scrolling of (0,1) random number generator :            0
 
-  event type: Ge76
+  event type: $isotope
               2nubb     0+ -> 0+     {2n}
               level, Elevel (MeV) =  0+       0.0000     MeV
 
@@ -219,7 +213,7 @@ function dk0gen(n::Int64; output="ge76-ssd.dk0", input="76Ge_ssd")
     @showprogress for i in 1:n
         println(fout, "       $i  0.00000       2")
 
-        p1, p2 = rand_2nbb(data)
+        p1, p2 = rand_2nbb(rng, data)
         p1 = p1 ./ 1e3
         p2 = p2 ./ 1e3
 
