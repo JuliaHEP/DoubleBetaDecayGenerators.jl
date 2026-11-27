@@ -178,7 +178,7 @@ rand_2nbb(data::TwoNuDBDData) = rand_2nbb(default_rng(), data)
 
 Generate N events and dump them on file in the DECAY0 format.
 """
-function dk0gen(n::Int64; output="ge76-2nbb.dk0", isotope::Symbol=:Ge76, rng::AbstractRNG=default_rng())
+function dk0gen(n::Integer; output="ge76-2nbb.dk0", isotope::Symbol=:Ge76, rng::AbstractRNG=default_rng())
 
     data = TwoNuDBDData(isotope)
 
